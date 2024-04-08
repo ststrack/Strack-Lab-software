@@ -1,0 +1,971 @@
+/* Morphometry in thresholded images for automatic mitochondria or other particle morphology analysis in ImageJ
+- copyleft Stefan Strack, April 30, 2006
+ */
+// Global variables
+var morphChannel = -1, rollingBall, rangeParticleSize, rangeCircularity, doColocalization, autoSelectChannel, autoSelectOnOpen, showImages, xCursor, yCursor, masterImage, accumulateResults = 0, skipAutoselection, threeSliceStackIsRGB, printComment, annotateImage, thresholdRectangle, despeckleThresholded, watershedThresholded, batchSaveThresholds, batching;
+var nSections = sumArea = sumPerimeter = nParticles = aspectRatio = ff = lwff = awff = s2 = s3 = p2 = p3 = len = ff2 = ar2 = ffar = nHoles = l2 = nSkeletons = sumLength = 0;
+var colocAccu = newArray(0.0, 0.0, 0.0, 0.0, 0.0, 0.0);
+var dumpAccumulator = 0;
+var resetAccumulator = 0;
+var printSliceNumber = 0;
+var commentTag = "";
+var annotation = "";
+var colors = newArray("*none*", "red", "green", "blue");
+var selectionsName = "Selections.txt";
+var defaultOutputName = "Output.txt", outputName = defaultOutputName;
+var thresholdedName = "Masks.tif";
+var clashChoices = newArray("Skip folder", "Overwrite", "Save with suffix"), clashChoice = "";
+var thresholdMethods = newArray("Default", "Huang", "Intermodes", "IsoData", "Li", "MaxEntropy", "Mean", "MinError(I)", "Minimum", "Moments", "Otsu", "Percentile", "RenyiEntropy", "Shanbhag", "Triangle", "Yen", "Local(Bernsen,R=10)");
+var thresholdMethod, savedDirectory;
+var version = "v5.00 [Feb 6, 2022]"
+	var x = checkVersion(); // version test upon install
+function checkVersion() {
+	requires("1.52a");
+	return 0;
+}
+
+/*
+Macros:
+
+Help & Options [F1] - displays help screen and configuration menu
+Save Results & Selections [F2] - saves Output.txt and Selections.txt in current directory, appending -1,2 ..  if files already exist
+Open Next [F3] - closes current image and opens next
+Enlarge Selection [F4] -
+Shrink Selection [Space][F4] - (by 20 pixels)
+RGB <-> Stack [F5] - toggles between RGB and 3-slice stack. If there is no user selection in RGB mode, macro tries to outline mitochondria with cell perimeter.
+(e.g. mitochondria in red, diffuse cell label in green (e.g. GFP-Drp1)). The macro
+converts the "Autoselect" channel to a binary mask and outlines with selection, then transfers selection
+to "Morphometry" channel
+Edit Stack [F6] - rearrange (delete, extract, move) slices in image stack
+Morphometry [F7] - performs morphometry on selected slice or channel and optional 3-way colocalization
+Morphometry-Next [F8] - F7, then F3
+Measure Entire Stack [F9] - applies selection to entire stack
+
+Modifiers:
+[Alt][F2] - starts Excel to view saved results/selections (Windows only)
+Batch Process Selections.txt - applies selections in "Selections.txt" to specified images in current directory (useful for testing deconvolution options)
+[Alt] [F3]/F5] - skip autoselection
+[Alt][F7]/F8] - accumulate image result
+[Alt][F9] - print accumulated results of entire stack
+[Space][F2] - save with overwrite
+[Space][F5] - dump accumulator (doesn't update selections list; use only if you forgot to output accumulated image series with [F7]/[F8])
+[Space][F7]/[F8]/[F9] - prepend comment (specified with [F1]) to output line
+
+Version history:
+v4.63:				 undid several BatchMode kludges that corrected bugs in prior ImageJ Change Log:
+v4.7 [Oct 26, 2017]: replaced defunct broken openNext() with built-in run("Open Next")
+v4.8 [Feb 10, 2018]: fixed openNext, now works from split channel image
+v4.9 [April 18, 2019]: consistent use of batchmode (faster)
+v4.93 [Nov 4, 2021]: Added "Select None" before Auto Threshold
+v5.0 [Feb 6, 2022]: added options for LLPS, BMC and other aggregate analyses
+ */
+
+macro "Morphometry Action Tool - C000D00D01D02D03D04D05D06D07D08D09D0aD0bD0cD0dD0eD0fD10D11D1eD1fD20D21D2eD2fD30D31D34D35D36D39D3aD3bD3cD3dD3eD3fD40D41D44D45D46D49D4aD4bD4cD4dD4eD4fD50D51D54D55D56D59D5aD5bD5cD5dD5eD5fD60D61D64D65D66D67D68D69D6aD6bD6cD6dD6eD6fD70D71D72D73D74D75D76D77D78D79D7aD7bD7cD7dD7eD7fD80D81D84D85D86D87D88D89D8aD8bD8cD8dD8eD8fD90D91D94D95D96D97D98D99D9aD9bD9eD9fDa0Da1Da4Da5Da6Da7Da8Da9DaeDafDb0Db1Db4Db5Db6Db7DbcDbdDbeDbfDc0Dc1Dc4Dc5DcaDcbDccDcdDceDcfDd0Dd1Dd8Dd9DdaDdbDdcDddDdeDdfDe0De1De6De7De8De9DeaDebDecDedDeeDefDf0Df1Df2Df3Df4Df5Df6Df7Df8Df9DfaDfbDfcDfdDfeDffC3b0C280Cff0C7f0D12D13D14D15D16D17D18D19D1aD1bD1cD1dD22D23D24D25D26D27D28D29D2aD2bD2cD2dD32D33D37D38D42D43D47D48D52D53D57D58D62D63D82D83D92D93D9cD9dDa2Da3DaaDabDacDadDb2Db3Db8Db9DbaDbbDc2Dc3Dc6Dc7Dc8Dc9Dd2Dd3Dd4Dd5Dd6Dd7De2De3De4De5" {
+	init(0);
+	saveSelection();
+	morphometry(colors[morphChannel]);
+}
+
+macro "Morphometry, Next Action Tool - C000D00D01D02D03D04D05D06D07D08D09D0aD0bD0cD0dD0eD0fD10D11D1eD1fD20D21D2eD2fD30D31D34D35D36D39D3aD3bD3cD3dD3eD3fD40D41D44D45D46D49D4aD4bD4cD4dD4eD4fD50D51D54D55D56D59D5aD5bD5cD5dD5eD5fD60D61D64D65D66D67D68D69D6aD6bD6cD6dD6eD6fD70D71D72D73D74D75D76D77D78D79D7aD7bD7cD7dD7eD7fD80D81D82D87D88D8dD8eD8fD90D91D9eD9fDa0Da1Da4Da5Da6Da9DaaDabDaeDafDb0Db1Db4Db5Db6Db9DbaDbbDbeDbfDc0Dc1Dc4Dc5Dc6Dc9DcaDcbDceDcfDd0Dd1DdeDdfDe0De1De2De7De8DedDeeDefDf0Df1Df2Df3Df4Df5Df6Df7Df8Df9DfaDfbDfcDfdDfeDffC3b0C280Cff0C7f0D12D13D14D15D16D17D18D19D1aD1bD1cD1dD22D23D24D25D26D27D28D29D2aD2bD2cD2dD32D33D37D38D42D43D47D48D52D53D57D58D62D63D83D84D85D86D89D8aD8bD8cD92D93D94D95D96D97D98D99D9aD9bD9cD9dDa2Da3Da7Da8DacDadDb2Db3Db7Db8DbcDbdDc2Dc3Dc7Dc8DccDcdDd2Dd3Dd4Dd5Dd6Dd7Dd8Dd9DdaDdbDdcDddDe3De4De5De6De9DeaDebDec" {
+	init(0);
+	saveSelection();
+	morphometry(colors[morphChannel]);
+	openNext();
+	if (autoSelectOnOpen && autoSelectChannel > 0) {
+		xCursor = yCursor = 0; // avoid selecting close to cursor
+		autoSelect(colors[autoSelectChannel]);
+		stack2RGB();
+		run("Restore Selection");
+	}
+}
+
+macro "RGB <> Stack Action Tool - C000D00D01D02D03D04D05D06D07D08D09D0aD0bD0cD0dD0eD0fD10D11D1eD1fD20D21D2eD2fD30D31D34D35D36D39D3aD3bD3cD3dD3eD3fD40D41D44D45D46D49D4aD4bD4cD4dD4eD4fD50D51D54D55D56D59D5aD5bD5cD5dD5eD5fD60D61D64D65D66D67D68D69D6aD6bD6cD6dD6eD6fD70D71D72D73D74D75D76D77D78D79D7aD7bD7cD7dD7eD7fD80D81D89D8aD8bD8eD8fD90D91D99D9aD9bD9eD9fDa0Da1Da4Da5Da6Da9DaaDabDaeDafDb0Db1Db4Db5Db6Db9DbaDbbDbeDbfDc0Dc1Dc4Dc5Dc6Dc9DcaDcbDceDcfDd0Dd1Dd4Dd5Dd6DdeDdfDe0De1De4De5De6De7DedDeeDefDf0Df1Df2Df3Df4Df5Df6Df7Df8Df9DfaDfbDfcDfdDfeDffC3b0C280Cff0C7f0D12D13D14D15D16D17D18D19D1aD1bD1cD1dD22D23D24D25D26D27D28D29D2aD2bD2cD2dD32D33D37D38D42D43D47D48D52D53D57D58D62D63D82D83D84D85D86D87D88D8cD8dD92D93D94D95D96D97D98D9cD9dDa2Da3Da7Da8DacDadDb2Db3Db7Db8DbcDbdDc2Dc3Dc7Dc8DccDcdDd2Dd3Dd7Dd8Dd9DdaDdbDdcDddDe2De3De8De9DeaDebDec" {
+	rgbStackConversion();
+}
+
+macro "Next Action Tool - C000D00D01D02D03D04D05D06D07D08D09D0aD0bD0cD0dD0eD0fD10D11D1eD1fD20D21D2eD2fD30D31D34D35D36D39D3aD3bD3cD3dD3eD3fD40D41D44D45D46D49D4aD4bD4cD4dD4eD4fD50D51D54D55D56D59D5aD5bD5cD5dD5eD5fD60D61D64D65D66D67D68D69D6aD6bD6cD6dD6eD6fD70D71D72D73D74D75D76D77D78D79D7aD7bD7cD7dD7eD7fD80D81D84D85D86D87D88D89D8aD8bD8eD8fD90D91D94D95D96D99D9aD9bD9eD9fDa0Da1Da4Da5Da6Da9DaaDabDaeDafDb0Db1Db4Db5Db6Db9DbaDbbDbeDbfDc0Dc1Dc4Dc5Dc6Dc9DcaDcbDceDcfDd0Dd1DdeDdfDe0De1De2De7De8DedDeeDefDf0Df1Df2Df3Df4Df5Df6Df7Df8Df9DfaDfbDfcDfdDfeDffC3b0C280Cff0C7f0D12D13D14D15D16D17D18D19D1aD1bD1cD1dD22D23D24D25D26D27D28D29D2aD2bD2cD2dD32D33D37D38D42D43D47D48D52D53D57D58D62D63D82D83D8cD8dD92D93D97D98D9cD9dDa2Da3Da7Da8DacDadDb2Db3Db7Db8DbcDbdDc2Dc3Dc7Dc8DccDcdDd2Dd3Dd4Dd5Dd6Dd7Dd8Dd9DdaDdbDdcDddDe3De4De5De6De9DeaDebDec" {
+	init(0);
+	/* if (is("Batch Mode"))
+		setBatchMode(false); */
+	openNext();
+	if (autoSelectOnOpen && autoSelectChannel > 0 && !skipAutoselection) {
+		xCursor = yCursor = 0; // avoid selecting close to cursor
+		autoSelect(colors[autoSelectChannel]);
+		stack2RGB();
+		run("Restore Selection");
+	}
+}
+
+macro "Help & Options [F1]" {
+	init(1);
+}
+
+macro "Save results [F2]" {
+	if (isKeyDown("space")) {
+		path1 = saveWithOverwrite(savedDirectory, outputName);
+		path2 = saveWithOverwrite(savedDirectory, selectionsName);
+	} else {
+		path1 = saveWithRename(savedDirectory, outputName);
+		path2 = saveWithRename(savedDirectory, selectionsName);
+	}
+	print("\\Clear");
+	print("Saved:\n" + path1 + "\n" + path2);
+	if (isKeyDown("alt")) {
+		exec("cmd", "/c", "start excel.exe \"" + path2 + "\"");
+		exec("cmd", "/c", "start excel.exe \"" + path1 + "\"");
+	}
+	setKeyDown("none");
+}
+
+macro "Open Next [F3]" {
+	init(0);
+	/*if (is("Batch Mode"))
+		setBatchMode(false);*/
+	openNext();
+	if (autoSelectOnOpen && autoSelectChannel > 0 && !skipAutoselection) {
+		xCursor = yCursor = 0; // avoid selecting close to cursor
+		autoSelect(colors[autoSelectChannel]);
+		stack2RGB();
+		run("Restore Selection");
+	}
+}
+
+macro "Enlarge (Shrink +<Space>) Selection [F4]" {
+	if (isKeyDown("space"))
+		enlargeBy = "-20";
+	else
+		enlargeBy = "20";
+	// if (!useImageScale) // must use pixel values, since there is no way to get the image scale to recalculate minimum particle size, etc.
+	run("Set Scale...", "distance=0 known=1 pixel=1 unit=cm"); // reset scale (use pixels for measurements)
+	run("Enlarge...", "enlarge=" + enlargeBy);
+	setKeyDown("none");
+}
+
+macro "RGB <-> Stack [F5]" {
+	rgbStackConversion();
+}
+
+function openNext() {
+	if (nSlices == 3) {
+		close();
+		open(File.directory + File.name);
+		if (roiManager("Count") > 0)
+			roiManager("Select", 0);
+	}
+	run("Open Next");
+}
+
+function rgbStackConversion() {
+	if (isKeyDown("space")) {
+		dumpAccumulator = 1;
+		init(0);
+		morphometry(colors[morphChannel]);
+		dumpAccumulator = 0;
+		showMessage("Morphometry: Accumulator Dump",
+			"Warning: \"" + selectionsName + "\" was not updated. To update, press [Alt][Space][F2],\nchange second digit of last line to \"0\", then re-open \"" + selectionsName + "\".");
+	} else {
+		init(0);
+		if (bitDepth == 24) {
+			if (selectionType() == -1 && autoSelectChannel > 0 && !skipAutoselection) // no selection
+				autoSelect(colors[autoSelectChannel]);
+			else if (selectionType() > -1) {
+				rgb2Stack(morphChannel);
+				roiManager("Select", 0);
+			} else
+				rgb2Stack(morphChannel);
+		} else if (nSlices == 3) {
+			// stack2RGB(); update102607 (otherwise, "Open Next" does not work)
+			close();
+			/*setBatchMode(false);*/
+			open(File.directory + File.name);
+			if (roiManager("Count") > 0)
+				roiManager("Select", 0);
+		} else
+			exit("RGB image or stack with 3 slices required");
+	}
+}
+
+macro "Morphometry [F7]" {
+	init(0);
+	saveSelection();
+	morphometry(colors[morphChannel]);
+}
+
+macro "Morphometry-Next [F8]" {
+	init(0);
+	saveSelection();
+	morphometry(colors[morphChannel]);
+	run("Open Next");
+	if (autoSelectOnOpen && autoSelectChannel > 0) {
+		xCursor = yCursor = 0; // avoid selecting close to cursor
+		autoSelect(colors[autoSelectChannel]);
+		stack2RGB();
+		run("Restore Selection");
+	}
+}
+
+macro "Measure Stack [F9]" {
+	init(0);
+	saveThreeSliceStackIsRGB = threeSliceStackIsRGB;
+	threeSliceStackIsRGB = 0; // to overide slice selection to morphChannel;
+	printSliceNumber = 1;
+	for (i = 1; i < nSlices; ++i) {
+		setSlice(i);
+		saveSelection();
+		morphometry(colors[morphChannel]);
+	}
+	setSlice(nSlices); // output accumulated results if alt key was pressed
+	if (accumulateResults) {
+		printSliceNumber = 0;
+		accumulateResults = 0;
+	}
+	saveSelection();
+	morphometry(colors[morphChannel]);
+	threeSliceStackIsRGB = saveThreeSliceStackIsRGB;
+	printSliceNumber = 0;
+}
+
+macro "Batch Process" {
+	init(0);
+	batching = true;
+	batchProcess(savedDirectory, colors[morphChannel]);
+}
+
+macro "Batch Process Folders" {
+	init(0);
+	Dialog.create("Batch options");
+	Dialog.addString("Save results to:", outputName);
+	Dialog.addChoice("If file exists:", clashChoices);
+	Dialog.show();
+	outputName = Dialog.getString();
+	clashChoice = Dialog.getChoice();
+	dir = getDirectory("Select a directory to process");
+	batching = true;
+	recursiveBatchProcess(dir);
+}
+
+//-----------------------------------------------------------------------------------------------------------------------------------------------
+function init(dialog) {
+	if (isKeyDown("alt")) {
+		accumulateResults = 1; // command modifier
+		skipAutoselection = 1;
+	} else {
+		accumulateResults = 0;
+		skipAutoselection = 0;
+	}
+	if (isKeyDown("space"))
+		printComment = 1; // command modifier
+	else
+		printComment = 0;
+
+	setKeyDown("none");
+
+	run("Options...", "iterations=1 count=1 black"); // set binary threshold option background=black *affects perimeter only, v4.93
+	run("Set Measurements...", "decimal=5 area perimeter fit mean integrated"); // densitometry
+	outputName = defaultOutputName; // may have been reset by Batch Process Folders, which may not have terminated correctly
+	if (File.directory != "null\\")
+		savedDirectory = File.directory;
+	if (nImages > 0) {
+		if (!isImage())
+			for (i = 1; i <= nImages; ++i) { // if image is not active, select first in list
+				selectImage(i);
+				if (getTitle() != thresholdedName)
+					i = nImages + 1; // break
+			}
+		masterImage = getTitle();
+		getCursorLoc(xCursor, yCursor, zCursor, flags);
+		// if (!useImageScale) // must use pixel values, since there is no way to get the image scale to recalculate minimum particle size, etc.
+		run("Set Scale...", "distance=0 known=1 pixel=1 unit=cm"); // reset scale (use pixels for measurements)
+		if (!dumpAccumulator || selectionType() > -1) {
+			roiManager("Reset");
+			if (selectionType() > -1) // save selection
+				roiManager("Add");
+		} else
+			roiManager("Select", 0); // dumpAccumulator AND no selection
+	}
+
+	if (morphChannel < 0) { // not yet configured
+		dialog = 1; // show configuration menu
+		morphChannel = 1; // if RGB images or 3-slice stack, channel for morphometry (1:red, 2:green, 3:blue)
+		rollingBall = 50; // background subtraction, smaller values remove more
+		rangeParticleSize = "9-Infinity"; // particles with outside range # pixels are ignored
+		rangeCircularity = "0.0-1.0"; // particles outside this range are ignored
+		doColocalization = 0; // 3-way colocalization (JACoP)
+		annotateImage = 0; // prompt user for comment or subjective score
+		autoSelectChannel = 0; // select cell by labeling in channel (1:red, 2:green, 3:blue)
+		autoSelectOnOpen = 0; // select cell when opening image with F3 or F8
+		threeSliceStackIsRGB = 1; // Treat 3-slice stack as RGB (analyzes morphChannel regardless of slice selection)
+		thresholdRectangle = 0; // 1: perform binary threshold of rectangle bounding selection, then analyze actual selection; 0: fill outside of selection with background, then analyze bounding rectangle
+		batchSaveThresholds = 0; // save thresholds if in batch mode (may overflow memory)
+		showImages = 0; // 0: BatchMode=On, 1: BatchMode=Off (show working images)
+		commentTag = "*UT"; // string prepended to output line in case <Space>[F7]/[F8]/[F9] is pressed
+		annotation = "1.0"; // default annotation
+		thresholdMethod = 0; // Default = 0, Li = 4, Local = 16
+		despeckleThresholded = 1; // smooths jagged particle outlines to reduce form factor
+		watershedthresholded = 0; // divide touching particles (works best for round objects, e.g. BMCs)
+	}
+
+	if (dialog) {
+		morphChannelChoices = newArray(4);
+		autoSelectChannelChoices = newArray(4);
+		for (i = 0; i < 4; ++i) {
+			morphChannelChoices[i] = colors[(i + morphChannel) % 4];
+			autoSelectChannelChoices[i] = colors[(i + autoSelectChannel) % 4];
+		}
+		thresholdChoices = newArray(17);
+		for (i = 0; i < 17; ++i)
+			thresholdChoices[i] = thresholdMethods[(i + thresholdMethod) % 17];
+
+		Dialog.create("Morphometry " + version);
+		/* Dialog.addMessage("Commands:\n [F1]  Help & Options\n [F2]  Save Results & Selections\n    +[Space] Overwrite Existing\n    +[Alt] Open With Excel\n [F3]  Open Next Image"
+		+ "\n [F4]  Enlarge Selection\n    +[Alt] Shrink\n [F5]  RGB <-> Stack (Autoselect)\n [F6] Edit Stack\n [F7]  Morphometry\n [F8]  Morphometry, then Open Next Image"
+		+ "\n [F9]  Measure Stack\n [    ]   Batch Process\n [Alt][F3]/[F5]  Skip Autoselection\n [Alt][F7]/[F8]/[F9]   Accumulate\n [Space][F7]/F8]/[F9]  Add Tag"
+		+ "\n [Space][F5]  Dump Accumulator\n");
+		 */
+
+		Dialog.addMessage("Commands:\n [F1] Help & Options\n [F2] Save Results & Selections\n        (+[Space] Overwrite Existing, +[Alt] Open With Excel)\n"
+			 + " [F3] Open Next Image (+[Alt] Skip Autoselection)\n"
+			 + " [F4] Enlarge Selection (+[Space] Shrink)\n"
+			 + " [F5] RGB <-> Stack (+[Alt] Skip Autoselection)\n [F6] Edit Stack\n"
+			 + " [F7] Morphometry (+[Alt] Accumulate, +[Space] Add Tag)\n [F8]  Morphometry, then Open Next Image (+[Alt], +[Space])\n"
+			 + " [F9] Measure Stack (+[Alt], +[Space])\n [Space][F5] Dump Accumulator\n [  ] Batch Process \"" + selectionsName + "\"\n [  ] Batch Process Folders\n");
+
+		Dialog.addMessage("Windows:\n \"" + outputName + "\" - Results\n \"" + selectionsName + "\" - Selection coordinates\n \"" + thresholdedName + "\" - Analyzed particle stack");
+		Dialog.addMessage("Options:");
+		Dialog.addChoice("Morphometry channel:", morphChannelChoices);
+		Dialog.addChoice("Autoselect channel:", autoSelectChannelChoices);
+		Dialog.addChoice("Threshold method:", thresholdChoices);
+		Dialog.addString("Tag:", commentTag);
+		Dialog.addString("Particle size:", rangeParticleSize);
+		Dialog.addString("Particle circularity:", rangeCircularity);
+		Dialog.addNumber("Rolling ball (0=skip):", rollingBall);
+		Dialog.addCheckbox("Colocalization & densitometry", doColocalization);
+		Dialog.addCheckbox("Prompt for annotation", annotateImage);
+		Dialog.addCheckbox("Autoselect when opening image", autoSelectOnOpen);
+		Dialog.addCheckbox("Treat 3-slice stack as RGB image", threeSliceStackIsRGB);
+		Dialog.addCheckbox("Threshold rectangle (reduce noise)", thresholdRectangle);
+		Dialog.addCheckbox("Divide touching particles (watershed)", watershedThresholded);
+		Dialog.addCheckbox("Despeckle " + thresholdedName, despeckleThresholded);
+		Dialog.addCheckbox("Add to " + thresholdedName + " in batch mode", batchSaveThresholds);
+		Dialog.addCheckbox("Show all working images", showImages);
+		Dialog.show();
+		morphChannel = index(colors, Dialog.getChoice());
+		autoSelectChannel = index(colors, Dialog.getChoice());
+		thresholdMethod = index(thresholdMethods, Dialog.getChoice());
+		commentTag = Dialog.getString();
+		rangeParticleSize = Dialog.getString();
+		rangeCircularity = Dialog.getString();
+		rollingBall = Dialog.getNumber();
+		doColocalization = Dialog.getCheckbox();
+		annotateImage = Dialog.getCheckbox();
+		autoSelectOnOpen = Dialog.getCheckbox();
+		threeSliceStackIsRGB = Dialog.getCheckbox();
+		thresholdRectangle = Dialog.getCheckbox();
+		watershedThresholded = Dialog.getCheckbox();
+		despeckleThresholded = Dialog.getCheckbox();
+		batchSaveThresholds = Dialog.getCheckbox();
+		showImages = Dialog.getCheckbox();
+		if (batchSaveThresholds) showImages = true; // v4.91 over-ride to make this work 
+	}
+	if (!showImages)
+		setBatchMode(true);
+	batching = false;
+}
+
+//-----------------------------------------------------------------------------------------------------------------------------------------------
+function index(array, choice) {
+	for (i = 0; i < array.length; ++i)
+		if (array[i] == choice)
+			return i;
+	return  - 1;
+}
+
+//-----------------------------------------------------------------------------------------------------------------------------------------------
+function isImage() { // parses text returned by getInfo("window.contents") to determine if active window is image, is there a better way?
+	info = getInfo("window.contents");
+	infoLines = split(info, "\n");
+	for (i = 0; i < infoLines.length && i < 10; ++i)
+		if (startsWith(infoLines[i], "Title:"))
+			return true;
+	return false
+}
+
+//-----------------------------------------------------------------------------------------------------------------------------------------------
+function saveWithRename(dir, fName) {
+	selectWindow(fName);
+	extIndex = lastIndexOf(fName, ".");
+	if (extIndex != -1) { // has extension
+		fExt = substring(fName, extIndex, lengthOf(fName));
+		fBase = substring(fName, 0, extIndex);
+	} else {
+		fBase = fName;
+		fExt = "";
+	}
+	path = dir + fName;
+	i = 0;
+	while (File.exists(path)) { // if file exists, save as file-1, -2, etc.
+		path = dir + fBase + "-" + (++i) + fExt;
+	}
+	save(path);
+	return path;
+}
+
+//-----------------------------------------------------------------------------------------------------------------------------------------------
+function saveWithOverwrite(dir, fName) {
+	selectWindow(fName);
+	outp = getInfo("window.contents");
+	print("\\Clear");
+	print(outp);
+	selectWindow("Log");
+	path = dir + fName;
+	save(path);
+	return path;
+}
+
+//-----------------------------------------------------------------------------------------------------------------------------------------------
+function saveSelection() {
+	if (selectionType() < 0 || selectionType() > 4)
+		exit("Simple area selection required");
+	else {
+		getSelectionCoordinates(xCoord, yCoord);
+		if (!isOpen(selectionsName)) {
+			//run("New... ", "name=[" + selectionsName + "] type=[Table] height=200 width=400 menu");
+			Table.create(selectionsName); 
+			print("[" + selectionsName + "]", savedDirectory); // for documentation only,  batchProcess() opens images in current directory
+		}
+		result = masterImage + "\t " + getSliceNumber() + "\t " + accumulateResults + "\t " + printComment + "\t ";
+		for (i = 0; i < xCoord.length; ++i)
+			result = result + xCoord[i] + " ";
+		result = result + "\t ";
+		for (i = 0; i < yCoord.length; ++i)
+			result = result + yCoord[i] + " ";
+		print("[" + selectionsName + "]", result + "\n");
+	}
+}
+
+//-----------------------------------------------------------------------------------------------------------------------------------------------
+function batchProcess(path, color) {
+	if (!showImages) setBatchMode(true); // added v4.91 20190425
+	selectWindow(selectionsName);
+	selections = split(getInfo("window.contents"), "\n");
+	// selections[0] contains original path; ignored
+	for (i = 1; i < selections.length; ++i) {
+		selection = split(selections[i], "\t"); // image name, slice#, accumulateResults, printComment, xCoords, yCoords
+		if (!isOpen(selection[0])) {
+			if (isOpen(masterImage)) { // close previous image
+				selectWindow(masterImage);
+				close();
+			}
+			open(path + selection[0]);
+			// if (!useImageScale) // must use pixel values, since there is no way to get the image scale to recalculate minimum particle size, etc.
+			run("Set Scale...", "distance=0 known=1 pixel=1 unit=cm"); // reset scale (use pixels for measurements)
+			masterImage = getTitle();
+		}
+		if (parseInt(selection[1]) <= nSlices)
+			setSlice(selection[1]); // stored slice # may be from 3-slice stack equivalent of RGB image
+		accumulateResults = selection[2];
+		printComment = selection[3];
+		xCoord = split(selection[4], " ");
+		yCoord = split(selection[5], " ");
+		makeSelection("freehand", xCoord, yCoord);
+		roiManager("Reset");
+		roiManager("Add");
+		// if (!showImages) setBatchMode(true); /* 2019-04-11 */
+		morphometry(color);
+	}
+	selectWindow(masterImage);
+	close();
+}
+
+//-----------------------------------------------------------------------------------------------------------------------------------------------
+function recursiveBatchProcess(dir) {
+	list = getFileList(dir);
+	for (i = 0; i < list.length; i++) {
+		if (endsWith(list[i], "/")) {
+			recursiveBatchProcess("" + dir + list[i]);
+		} else if (endsWith(list[i], selectionsName)) {
+			if (File.exists(dir + outputName) && startsWith(clashChoice, "Skip"))
+				print("Skipping folder because " + dir + outputName + " already exists");
+			else {
+				if (isOpen(selectionsName)) {
+					selectWindow(selectionsName);
+					run("Close");
+				}
+				if (isOpen(outputName)) {
+					selectWindow(outputName);
+					run("Close");
+				}
+				path = dir + list[i];
+				run("Text File... ", "open=[" + path + "]");
+				// open(path); // in 1.43q; *.txt files are opened as macros by default, which breaks the split() command
+				batchProcess(dir, colors[morphChannel]);
+				if (startsWith(clashChoice, "Overwrite"))
+					print("Saving " + saveWithOverwrite(dir, outputName));
+				else
+					print("Saving " + saveWithRename(dir, outputName));
+			}
+		}
+	}
+}
+
+//-----------------------------------------------------------------------------------------------------------------------------------------------
+function autoSelect(color) {
+	rename("tmp");
+	run("RGB Split");
+	selectWindow("tmp (" + color + ")");
+	run("Duplicate...", "tmp2");
+	run("Find Edges");
+	run("Gaussian Blur...", "sigma=5.0");
+	run("Make Binary");
+	run("Create Selection");
+	run("Enlarge...", "enlarge=10");
+	// waitForUser("After enlarge selection ..");
+	roiManager("Reset");
+	roiManager("Add");
+	close();
+	selectWindow("tmp (green)");
+	run("Copy");
+	close();
+	selectWindow("tmp (red)");
+	run("Add Slice");
+	run("Paste");
+	selectWindow("tmp (blue)");
+	run("Copy");
+	close();
+	selectWindow("tmp (red)");
+	run("Add Slice");
+	run("Paste");
+	if (morphChannel > 0)
+		setSlice(morphChannel);
+	roiManager("Select", 0);
+	if (selectionType() == 9) { // composite!
+		roiManager("Split");
+		roiManager("Delete");
+	}
+	//
+	// Select cell at cursor, otherwise select largest area
+	//
+	n = roiManager("Count");
+	maxArea = 0;
+	indexMax = 0;
+	cursorInSelection = 0;
+	if (xCursor >= 0 && yCursor >= 0)
+		cursorInImage = 1;
+	else
+		cursorInImage = 0;
+	//waitForUser("cursorInImage="+cursorInImage);
+	for (i = 0; i < n && !cursorInSelection; i++) {
+		roiManager('Select', i);
+		getStatistics(area);
+		if (area > maxArea) {
+			maxArea = area;
+			indexMax = i;
+		}
+		if (cursorInImage) {
+			getSelectionBounds(xTop, yTop, width, height);
+			if ((xCursor >= xTop) && (xCursor < xTop + width) && (yCursor >= yTop) && (yCursor < yTop + height))
+				cursorInSelection = 1;
+		}
+	}
+
+	if (!cursorInSelection)
+		roiManager("Select", indexMax);
+	// else waitForUser("cursor("+xCursor+","+yCursor+") in selection: "+xTop+","+yTop+","+xTop+width-1+","+yTop+height-1);
+	getStatistics(area0); // expand selection until no longer composite or until it fills image
+	do {
+		run("Enlarge...", "enlarge=10");
+		getStatistics(area);
+		if (area > area0) // selection expanded
+			area0 = area;
+		else
+			area0 = 0;
+	} while (area0 > 0 && selectionType() > 4);
+
+	if (area0 == 0)
+		run("Select None");
+	//@if (is("Batch Mode")) setBatchMode(false); //# critical
+	run("Fire");
+	rename(masterImage);
+}
+
+//-----------------------------------------------------------------------------------------------------------------------------------------------
+function stack2RGB() {
+	if (is("Batch Mode"))
+		setBatchMode(false); //# critical
+	rename("tmp");
+	run("Convert Stack to Images");
+	run("RGB Merge...", "red=[tmp-0001] green=[tmp-0002] blue=[tmp-0003]");
+	rename(masterImage);
+	if (!showImages)
+		setBatchMode(true);
+}
+
+//-----------------------------------------------------------------------------------------------------------------------------------------------
+function rgb2Stack(slice) {
+	title = getTitle();
+	rename("tmp");
+	run("RGB Split");
+	selectWindow("tmp (green)");
+	run("Copy");
+	close();
+	selectWindow("tmp (red)");
+	run("Add Slice");
+	run("Paste");
+	selectWindow("tmp (blue)");
+	run("Copy");
+	close();
+	selectWindow("tmp (red)");
+	run("Add Slice");
+	run("Paste");
+
+	run("Select None");
+	rename(title);
+	if (slice > 0)
+		setSlice(slice);
+	if (slice >= 0) { // slice =-1 when called from morphometry
+		if (is("Batch Mode"))
+			setBatchMode(false); //# critical
+		run("Fire");
+		if (!showImages)
+			setBatchMode(true);
+	}
+}
+
+//-----------------------------------------------------------------------------------------------------------------------------------------------
+function morphometry(morphColor) {
+	//
+	// intialize output line
+	//
+
+	if (!dumpAccumulator && (morphChannel > 0 || doColocalization))
+		nSections += 1;
+	if (nParticles > 0)
+		result = "\\Update:"; // accumulator loaded, overwrite previous line
+	else
+		result = "";
+	if (printComment)
+		result = result + commentTag + " "; // prepend comment
+	if (printSliceNumber)
+		result = result + " " + getSliceNumber() + ": "; // when processing entire stack
+	if (accumulateResults)
+		result = result + masterImage + ": accumulating section " + nSections; // accumulating
+	else {
+		result = result + masterImage;
+		if (nSections > 1)
+			result = result + " (" + nSections + " sections)";
+	}
+	//
+	// generate morphometrics
+	//
+	if (morphChannel > 0) {
+		colorImage = "tmp (" + morphColor + ")";
+		if (bitDepth() == 24) { // RGB image
+			run("Select None");
+			run("Duplicate...", "title=tmp");
+			run("RGB Split");
+			if (morphColor != "red") {
+				selectWindow("tmp (red)");
+				close();
+			}
+			if (morphColor != "green") {
+				selectWindow("tmp (green)");
+				close();
+			}
+			if (morphColor != "blue") {
+				selectWindow("tmp (blue)");
+				close();
+			}
+			selectWindow(colorImage);
+			run("Restore Selection");
+		}
+
+		if (nSlices == 3 && threeSliceStackIsRGB)
+			setSlice(morphChannel); // force channel in "RGB stack", regardless of which slice is current
+
+		// copy selection to new window and clear outside
+		run("Select None");
+		run("Duplicate...", "\n");
+		run("Grays");
+		fileName = getTitle();
+		if (!isOpen(thresholdedName) && (batchSaveThresholds || !batching)) {
+			if (is("Batch Mode")) setBatchMode(false); // enabled v4.91 20190425
+			run("Duplicate...", "title=" + thresholdedName);
+			selectWindow(fileName);
+			if (!showImages) setBatchMode(true); // enabled v4.91 20190425
+		}
+		roiManager("Select", 0); // v4.91 error when batchSaveThresholds and !showImages
+		run("Crop");
+		if (selectionType() > 0 && !thresholdRectangle) { // unless rectangular selection (no outside)
+			run("Duplicate...", "title=Binary");
+			run("Convert to Mask");
+			run("Create Selection");
+			run("Make Inverse");
+			if (selectionType() == -1) // no selection 20220216
+				run("Select All");
+			roiManager("Add");
+			close();
+			selectWindow(fileName);
+			n = roiManager("Count");
+			roiManager("Select", n - 1);
+			getRawStatistics(_area, backG); // mean is background
+			setColor(round(backG));
+			run("Restore Selection");
+			run("Make Inverse");
+			fill();
+			run("Gaussian Blur...", "radius=64"); // smoothes abrupt background transition
+			roiManager("Delete");
+			//run("Select None");
+		} //else run("Select None");
+		getMinAndMax(min, max);
+		if (backG > max / 2)
+		  run("Invert"); // need white on black for deconvolution
+		run("Select None"); // v4.93
+		//
+		// image enhancement (modify as needed, then threshold)
+		//
+		if (rollingBall > 0)
+			run("Subtract Background...", "rolling=" + rollingBall); // lower for better fine discrimination at expense of large areas
+		//
+		// Thresholding, global or local, v4.5
+		//
+		// if (thresholdMethod == 0) run("Make Binary"); // Default: does not require Auto threshold plugin, v4.61 --> use Auto Threshold even for default (ignore black/white works better)
+		// else {
+		if (bitDepth != 8)
+			run("8-bit");
+		if (thresholdMethod == 16) // Local threshold, Bernsen algorithm, Radius = 10
+			run("Auto Local Threshold", "method=Bernsen radius=10 parameter_1=0 parameter_2=0 white");
+		else
+			run("Auto Threshold", "method=" + thresholdMethods[thresholdMethod] + " ignore_black ignore_white white");
+		if (watershedThresholded) run("Watershed"); // 2022-02-05: separates touching particles
+
+		//run("Invert LUT"); v4.93 - after Binary Options --> black background no longer necessary
+		// }
+		if (despeckleThresholded)
+			run("Despeckle"); // 2013-10-07 remove graininess in long exposure images
+		//
+		// run particle analysis with minimum particle size option
+		//
+		if (!dumpAccumulator) { // skip measurements if [space] was pressed
+			if (thresholdRectangle)
+				run("Restore Selection");
+			run("Analyze Particles...", "size=" + rangeParticleSize + " circularity=" + rangeCircularity + " show=Masks clear");
+			rename("_Mask"); // v5.0
+			//
+			// looping through the particle table, compile various totals (operating on Mask)
+			//
+			for (i = 0; i < nResults; i++) {
+				sumArea += a = getResult('Area', i);
+				sumPerimeter += p = getResult('Perim.', i);
+				awff += b = (p * p) / (4 * 3.14159265358979);
+				ff += e = b / a;
+				s2 += a * a;
+				s3 += a * a * a;
+				p2 += p * p;
+				p3 += p * p * p;
+				len += c = getResult("Major", i);
+				aspectRatio += d = c / getResult("Minor", i);
+				ff2 += e * e;
+				ar2 += d * d;
+				ffar += d * e;
+				lwff += b / a * c;
+			}
+			nParticles += nResults;
+
+			//
+			// document thresholded "mask" by appending to stack
+			//
+			run("Copy");
+			close();
+			if (batchSaveThresholds || !batching) {
+				if (is("Batch Mode")) setBatchMode(false); // enabled v4.91 20190425
+				selectWindow(thresholdedName);
+				run("Add Slice");
+				run("Paste");
+				run("Select None");
+				setMetadata("Label", masterImage);
+				selectWindow(fileName); // moved from below 20190522
+				if (!showImages) setBatchMode(true); // enabled v4.91 20190425
+			}
+			
+			//selectWindow(fileName); // moved up 20190522
+
+			//
+			// invert thresholded image, then "Analyze particles" to obtain interior holes in networked particles
+			//
+
+			run("Invert");
+			run("Analyze Particles...", "minimum=1 maximum=Infinity show=Nothing clear exclude"); // exclude edge particles !
+			for (i = 0; i < nResults; i++) {
+				sumPerimeter += p = getResult('Perim.', i);
+				p2 += p * p;
+				p3 += p * p * p;
+			}
+			nHoles += nResults;
+			print("nHoles=" + nHoles);
+
+			//
+			// skeletonize
+			//
+			run("Invert");
+			run("Skeletonize");
+			run("Analyze Particles...", "minimum=1 maximum=Infinity show=Nothing clear");
+			for (i = 0; i < nResults; i++) {
+				sumLength += a = getResult('Area', i);
+				l2 += a * a;
+			}
+
+			nSkeletons += nResults;
+
+			if (batchSaveThresholds || !batching) {
+				if (is("Batch Mode")) setBatchMode(false); // enabled v4.91 20190425
+				run("Copy");
+				close();
+				selectWindow(thresholdedName);
+				setPasteMode("XOR"); // overlay binary image with skeleton
+				run("Paste");
+				run("Select None");
+				setPasteMode("Copy");
+				if (!showImages) setBatchMode(true); // enabled v4.91 20190425
+			} else
+				close();
+
+		} // NOT dumpAccumulator
+		//
+		// output final results to Log window or accumulate if alt key pressed
+		//
+		if (!accumulateResults) { // print
+			awff /= sumArea;
+			lwff /= len;
+			// aveParticles = nParticles / nSections;
+			result = result + "\t " + nParticles + "\t " + sumArea / (getWidth() * getHeight()) + "\t " + sumArea / nParticles + "\t "+ s2 / (sumArea * sumArea) / nParticles + "\t "
+				 + s3 / (sumArea * sumArea * sumArea) / nParticles + "\t " + sumArea / sumPerimeter + "\t " + s2 / p2 + "\t "
+				 + s3 / p3 + "\t " + ff / nParticles + "\t " + aspectRatio / nParticles + "\t "
+				 + awff + "\t " + ff2 / nParticles + "\t " + ar2 / nParticles + "\t " + ffar / nParticles
+				 + "\t " + 1 / nSkeletons + "\t " + l2 / (sumLength * sumLength) / nSkeletons + "\t " + sumLength / nSkeletons;
+			resetAccumulator = 1;
+		}
+		if (isOpen(colorImage)) {
+			selectWindow(colorImage);
+			close();
+		}
+	} // if morphChannel > 0
+	//
+	// prompt for user input
+	//
+	if (annotateImage)
+		annotation = getString("Annotation:", annotation);
+	//
+	//  colocalization of stack of red, green, and blue images
+	//
+	selectWindow(masterImage);
+	if (doColocalization && (nSlices == 3 || bitDepth == 24)) {
+		run("Select None");
+		if (nSlices == 3 && threeSliceStackIsRGB)
+			run("Duplicate...", "duplicate title=tmp");
+		else
+			run("Duplicate...", "title=tmp"); // work on single slice if stack has != 3 slices
+		if (bitDepth == 24)
+			rgb2Stack(-1);
+		img1 = "tmp-0001";
+		img2 = "tmp-0002";
+		img3 = "tmp-0003";
+		roiManager("Select", 0);
+		run("Crop");
+		if (selectionType() > 0) {
+			run("Make Inverse");
+			setColor(0);
+			for (i = 1; i <= nSlices; ++i) {
+				setSlice(i);
+				fill();
+			}
+		}
+
+		run("Convert Stack to Images");
+		if (!dumpAccumulator)
+			colocStr = "" + colocalize(img1, img2) + " \t" + colocalize(img1, img3) + " \t" + colocalize(img2, img3);
+		else
+			colocStr = "0.0 \t0.0 \t0.0 \t0.0 \t0.0 \t0.0"; // skip measurements, only output accumulated results
+
+		if (nSections == 1 && !accumulateResults) {
+			result = result + " \t" + colocStr; // short cut for most common case
+			resetAccumulator = 1;
+		} else {
+			colocStrAr = split(colocStr, "\t");
+			for (i = 0; i < 6; ++i)
+				colocAccu[i] += parseFloat(colocStrAr[i]);
+
+			if (!accumulateResults) { // print
+				colocStr = "";
+				for (i = 0; i < 6; ++i) {
+					colocStr = colocStr + " \t" + d2s(colocAccu[i] / nSections, 3);
+					colocAccu[i] = 0.0; // reset
+				}
+				result = result + colocStr;
+				resetAccumulator = 1;
+			}
+		}
+		selectWindow(img1);
+		run("Measure"); // densitometry
+		result = result + " \t" + getResult("IntDen"); // densitometry
+		close();
+		selectWindow(img2);
+		run("Measure"); // densitometry
+		result = result + " \t" + getResult("IntDen"); // densitometry
+		close();
+		selectWindow(img3);
+		run("Measure"); // densitometry
+		result = result + " \t" + getResult("IntDen"); // densitometry
+		close();
+	}
+	//
+	// output to results table
+	//
+	if (!isOpen(outputName)) {
+		// run("New... ", "name=[" + outputName + "] type=[Table] height=200 width=400 menu");
+		Table.create(outputName); 
+		if (morphChannel > 0 && doColocalization)
+			print("[" + outputName + "]", "=COUNT(B7:B999) \t=AVERAGE(B7:B999) \t=AVERAGE(C7:C999) \t=AVERAGE(D7:D999) \t=AVERAGE(E7:E999) \t=AVERAGE(F7:F999) \t=AVERAGE(G7:G999) \t=AVERAGE(H7:H999) \t=AVERAGE(I7:I999) \t=AVERAGE(J7:J999) \t=AVERAGE(K7:K999) \t=AVERAGE(L7:L999) \t=AVERAGE(M7:M999) \t=AVERAGE(N7:N999) \t=AVERAGE(O7:O999) \t=AVERAGE(P7:P999) \t=AVERAGE(Q7:Q999) \t=AVERAGE(R7:R999) \t=AVERAGE(S7:S999) \t=AVERAGE(T7:T999) \t=AVERAGE(U7:U999) \t=AVERAGE(V7:V999) \t=AVERAGE(W7:W999) \t=AVERAGE(X7:X999) \t=AVERAGE(Y7:Y999) \t=AVERAGE(Z7:Z999) \t=AVERAGE(AA7:AA999) \t=AVERAGE(AB7:AB999) \t=AVERAGE(AC7:AC999) \t=AVERAGE(AD7:AD999)\n"
+				 + "\t=STDEV(B7:B999) \t=STDEV(C7:C999) \t=STDEV(D7:D999) \t=STDEV(E7:E999) \t=STDEV(F7:F999) \t=STDEV(G7:G999) \t=STDEV(H7:H999) \t=STDEV(I7:I999) \t=STDEV(J7:J999) \t=STDEV(K7:K999) \t=STDEV(L7:L999) \t=STDEV(M7:M999) \t=STDEV(N7:N999) \t=STDEV(O7:O999) \t=STDEV(P7:P999) \t=STDEV(Q7:Q999) \t=STDEV(R7:R999) \t=STDEV(S7:S999) \t=STDEV(T7:T999) \t=STDEV(U7:U999) \t=STDEV(V7:V999) \t=STDEV(W7:W999) \t=STDEV(X7:X999) \t=STDEV(Y7:Y999) \t=STDEV(Z7:Z999) \t=STDEV(AA7:AA999) \t=STDEV(AB7:AB999) \t=STDEV(AC7:AC999) \t=STDEV(AD7:AD999)\n"
+				 + "\n\n\nfile \tp \tat \ta \ta2 \ta3 \ta/p \ta2/p2 \ta3/p3 \tff \tar \tawff \tff2 \tar2 \tffar \tskl \tskl2 \tlen \tRGp \tRGm1 \tRGm2 \tRBp \tRBm1 \tRBm2 \tGBp \tGBm1 \tGBm2 \tidR \tidG \tidB");
+		else if (morphChannel > 0)
+			print("[" + outputName + "]", "=COUNT(B7:B999) \t=AVERAGE(B7:B999) \t=AVERAGE(C7:C999) \t=AVERAGE(D7:D999) \t=AVERAGE(E7:E999) \t=AVERAGE(F7:F999) \t=AVERAGE(G7:G999) \t=AVERAGE(H7:H999) \t=AVERAGE(I7:I999) \t=AVERAGE(J7:J999) \t=AVERAGE(K7:K999) \t=AVERAGE(L7:L999) \t=AVERAGE(M7:M999) \t=AVERAGE(N7:N999) \t=AVERAGE(O7:O999) \t=AVERAGE(P7:P999) \t=AVERAGE(Q7:Q999) \t=AVERAGE(R7:R999)\n"
+				 + "\t=STDEV(B7:B999) \t=STDEV(C7:C999) \t=STDEV(D7:D999) \t=STDEV(E7:E999) \t=STDEV(F7:F999) \t=STDEV(G7:G999) \t=STDEV(H7:H999) \t=STDEV(I7:I999) \t=STDEV(J7:J999) \t=STDEV(K7:K999) \t=STDEV(L7:L999) \t=STDEV(M7:M999) \t=STDEV(N7:N999) \t=STDEV(O7:O999) \t=STDEV(P7:P999) \t=STDEV(Q7:Q999) \t=STDEV(R7:R999)\n"
+				 + "\n\n\nfile \tp \tat \ta \ta2 \ta3 \ta/p \ta2/p2 \ta3/p3 \tff \tar \tawff \tff2 \tar2 \tffar \tskl \tskl2 \tlen");
+		else if (doColocalization)
+			print("[" + outputName + "]", "=COUNT(B7:B999) \t=AVERAGE(B7:B999) \t=AVERAGE(C7:C999) \t=AVERAGE(D7:D999) \t=AVERAGE(E7:E999) \t=AVERAGE(F7:F999) \t=AVERAGE(G7:G999) \t=AVERAGE(H7:H999) \t=AVERAGE(I7:I999) \t=AVERAGE(J7:J999) \t=AVERAGE(K7:K999) \t=AVERAGE(L7:L999) \t=AVERAGE(M7:M999)\n" + "\t=STDEV(B7:B999) \t=STDEV(C7:C999) \t=STDEV(D7:D999) \t=STDEV(E7:E999) \t=STDEV(F7:F999) \t=STDEV(G7:G999) \t=STDEV(H7:H999) \t=STDEV(I7:I999) \t=STDEV(J7:J999) \t=STDEV(K7:K999) \t=STDEV(L7:L999) \t=STDEV(M7:M999)\n" + "\n\n\nfile \tRGp \tRGm1 \tRGm2 \tRBp \tRBm1 \tRGm2 \tGBp \tGBm1 \tGBm2 \tidR \tidG \tidB");
+		else
+			print("[" + outputName + "]", "<<<< NOTHING TO DO >>>>");
+	}
+	if (annotateImage)
+		result = result + " \t" + annotation;
+	print("[" + outputName + "]", result + "\n");
+	if (resetAccumulator) {
+		nSections = sumArea = sumPerimeter = nParticles = aspectRatio = ff = lwff = awff = s2 = s3 = p2 = p3 = len = ff2 = ar2 = ffar = nHoles = l2 = nSkeletons = sumLength = 0;
+		resetAccumulator = 0;
+	}
+
+	if (!batching)
+		setBatchMode(false);
+	selectWindow(masterImage);
+	if (!batching)
+		roiManager("Select", 0);
+	//@if (!showImages) setBatchMode(true); // needed for batch mode processing of Selections.txt
+}
+
+//-----------------------------------------------------------------------------------------------------------------------------------------------
+function colocalize(img1, img2) { // returns Pearson's and Manders' coefficients
+	print("\\Clear");
+	selectWindow(img1);
+	setAutoThreshold();
+	getThreshold(thrs1, upper);
+	selectWindow(img2);
+	setAutoThreshold();
+	getThreshold(thrs2, upper);
+	//run("JACoP ");
+	run("JACoP ", "imga=[" + img1 + "] imgb=[" + img2 + "] thra=" + thrs1 + " thrb=" + thrs2 + " pearson mm");
+	selectWindow("Log");
+	lines = split(getInfo("window.contents"), "\n\r");
+	return substring(lines[4], 2, lengthOf(lines[4]))
+	 + "\t " + substring(lines[9], 3, indexOf(lines[9], " ")) // M1 (with thresholds)
+	 + "\t " + substring(lines[10], 3, indexOf(lines[10], " ")); // M2 (with thresholds)
+}

@@ -1,0 +1,458 @@
+/*
+reports pixel intensity of particle ("particle"), outside of particle (but "inside" of selection), "outside" of selection, and underneath selection (perimeter)
+v1.1 also reports area of selection 
+v1.2 allows stack processing, fixed tagIndex saving to Selections.txt
+ */
+var selectionsName = "Selections.txt";
+var outputName = "Densities.txt", defaultOutputName = outputName;
+var colors = newArray("red", "green", "blue");
+var thresholdMethods = newArray("Default", "Huang", "Intermodes", "IsoData", "Li", "MaxEntropy", "Mean", "MinError(I)", "Minimum", "Moments", "Otsu", "Percentile", "RenyiEntropy", "Shanbhag", "Triangle", "Yen", "Local");
+var resizeMethods = newArray("No", "Dilate", "Erode");
+var commentTag = newArray("", "*1-", "*2-", "*3-"), tagIndex; 
+var	clashChoices = newArray("Skip folder","Overwrite","Save with suffix"), clashChoice = "";
+var thresholdM = "Default", maskCh = "red", targetCh = "red", prompt = -1, despeckleM = true, rollingM = 50, smoothM = true, resizeM = "No"; // for Mask with Channel
+var version = "v1.21 [Feb 19, 2024]"
+var masterImage = "", processStack = false, doNotAskAgain = false;
+function checkVersion() {
+	requires("1.5");
+	return 0;
+}
+
+macro "Densitometry Action Tool - C000D00D01D02D03D04D05D06D07D08D09D0aD0bD0cD0dD0eD0fD10D11D1eD1fD20D21D2eD2fD30D31D34D35D36D39D3aD3bD3cD3dD3eD3fD40D41D44D45D46D49D4aD4bD4cD4dD4eD4fD50D51D54D55D56D59D5aD5bD5cD5dD5eD5fD60D61D64D65D66D67D68D69D6aD6bD6cD6dD6eD6fD70D71D72D73D74D75D76D77D78D79D7aD7bD7cD7dD7eD7fD80D81D84D85D86D87D88D89D8aD8bD8cD8dD8eD8fD90D91D94D95D96D97D98D99D9aD9bD9eD9fDa0Da1Da4Da5Da6Da7Da8Da9DaeDafDb0Db1Db4Db5Db6Db7DbcDbdDbeDbfDc0Dc1Dc4Dc5DcaDcbDccDcdDceDcfDd0Dd1Dd8Dd9DdaDdbDdcDddDdeDdfDe0De1De6De7De8De9DeaDebDecDedDeeDefDf0Df1Df2Df3Df4Df5Df6Df7Df8Df9DfaDfbDfcDfdDfeDffC3b0C280Cff0C7f0D12D13D14D15D16D17D18D19D1aD1bD1cD1dD22D23D24D25D26D27D28D29D2aD2bD2cD2dD32D33D37D38D42D43D47D48D52D53D57D58D62D63D82D83D92D93D9cD9dDa2Da3DaaDabDacDadDb2Db3Db8Db9DbaDbbDc2Dc3Dc6Dc7Dc8Dc9Dd2Dd3Dd4Dd5Dd6Dd7De2De3De4De5"{
+	doDensitometry();
+}
+
+macro "Densitometry, Next Action Tool - C000D00D01D02D03D04D05D06D07D08D09D0aD0bD0cD0dD0eD0fD10D11D1eD1fD20D21D2eD2fD30D31D34D35D36D39D3aD3bD3cD3dD3eD3fD40D41D44D45D46D49D4aD4bD4cD4dD4eD4fD50D51D54D55D56D59D5aD5bD5cD5dD5eD5fD60D61D64D65D66D67D68D69D6aD6bD6cD6dD6eD6fD70D71D72D73D74D75D76D77D78D79D7aD7bD7cD7dD7eD7fD80D81D82D87D88D8dD8eD8fD90D91D9eD9fDa0Da1Da4Da5Da6Da9DaaDabDaeDafDb0Db1Db4Db5Db6Db9DbaDbbDbeDbfDc0Dc1Dc4Dc5Dc6Dc9DcaDcbDceDcfDd0Dd1DdeDdfDe0De1De2De7De8DedDeeDefDf0Df1Df2Df3Df4Df5Df6Df7Df8Df9DfaDfbDfcDfdDfeDffC3b0C280Cff0C7f0D12D13D14D15D16D17D18D19D1aD1bD1cD1dD22D23D24D25D26D27D28D29D2aD2bD2cD2dD32D33D37D38D42D43D47D48D52D53D57D58D62D63D83D84D85D86D89D8aD8bD8cD92D93D94D95D96D97D98D99D9aD9bD9cD9dDa2Da3Da7Da8DacDadDb2Db3Db7Db8DbcDbdDc2Dc3Dc7Dc8DccDcdDd2Dd3Dd4Dd5Dd6Dd7Dd8Dd9DdaDdbDdcDddDe3De4De5De6De9DeaDebDec"{
+	doDensitometry();	
+	run("Open Next");
+}
+
+macro "RGB <> Stack Action Tool - C000D00D01D02D03D04D05D06D07D08D09D0aD0bD0cD0dD0eD0fD10D11D1eD1fD20D21D2eD2fD30D31D34D35D36D39D3aD3bD3cD3dD3eD3fD40D41D44D45D46D49D4aD4bD4cD4dD4eD4fD50D51D54D55D56D59D5aD5bD5cD5dD5eD5fD60D61D64D65D66D67D68D69D6aD6bD6cD6dD6eD6fD70D71D72D73D74D75D76D77D78D79D7aD7bD7cD7dD7eD7fD80D81D89D8aD8bD8eD8fD90D91D99D9aD9bD9eD9fDa0Da1Da4Da5Da6Da9DaaDabDaeDafDb0Db1Db4Db5Db6Db9DbaDbbDbeDbfDc0Dc1Dc4Dc5Dc6Dc9DcaDcbDceDcfDd0Dd1Dd4Dd5Dd6DdeDdfDe0De1De4De5De6De7DedDeeDefDf0Df1Df2Df3Df4Df5Df6Df7Df8Df9DfaDfbDfcDfdDfeDffC3b0C280Cff0C7f0D12D13D14D15D16D17D18D19D1aD1bD1cD1dD22D23D24D25D26D27D28D29D2aD2bD2cD2dD32D33D37D38D42D43D47D48D52D53D57D58D62D63D82D83D84D85D86D87D88D8cD8dD92D93D94D95D96D97D98D9cD9dDa2Da3Da7Da8DacDadDb2Db3Db7Db8DbcDbdDc2Dc3Dc7Dc8DccDcdDd2Dd3Dd7Dd8Dd9DdaDdbDdcDddDe2De3De8De9DeaDebDec"{
+	rgbStackConversion();
+}
+
+
+macro "Next Action Tool - C000D00D01D02D03D04D05D06D07D08D09D0aD0bD0cD0dD0eD0fD10D11D1eD1fD20D21D2eD2fD30D31D34D35D36D39D3aD3bD3cD3dD3eD3fD40D41D44D45D46D49D4aD4bD4cD4dD4eD4fD50D51D54D55D56D59D5aD5bD5cD5dD5eD5fD60D61D64D65D66D67D68D69D6aD6bD6cD6dD6eD6fD70D71D72D73D74D75D76D77D78D79D7aD7bD7cD7dD7eD7fD80D81D84D85D86D87D88D89D8aD8bD8eD8fD90D91D94D95D96D99D9aD9bD9eD9fDa0Da1Da4Da5Da6Da9DaaDabDaeDafDb0Db1Db4Db5Db6Db9DbaDbbDbeDbfDc0Dc1Dc4Dc5Dc6Dc9DcaDcbDceDcfDd0Dd1DdeDdfDe0De1De2De7De8DedDeeDefDf0Df1Df2Df3Df4Df5Df6Df7Df8Df9DfaDfbDfcDfdDfeDffC3b0C280Cff0C7f0D12D13D14D15D16D17D18D19D1aD1bD1cD1dD22D23D24D25D26D27D28D29D2aD2bD2cD2dD32D33D37D38D42D43D47D48D52D53D57D58D62D63D82D83D8cD8dD92D93D97D98D9cD9dDa2Da3Da7Da8DacDadDb2Db3Db7Db8DbcDbdDc2Dc3Dc7Dc8DccDcdDd2Dd3Dd4Dd5Dd6Dd7Dd8Dd9DdaDdbDdcDddDe3De4De5De6De9DeaDebDec"{
+	run("Open Next");
+}
+
+macro "Set Options [F1]" {
+	option("Select options");
+}
+
+macro "Save results [F2]" {
+	if (isKeyDown("space")) {
+		path1 = saveWithOverwrite(File.directory, outputName);
+		path2 = saveWithOverwrite(File.directory, selectionsName);
+	} else { 
+		path1 = saveWithRename(File.directory, outputName);
+		path2 = saveWithRename(File.directory, selectionsName);
+	}
+	print("\\Clear");
+	print("Saved:\n" + path1 + "\n" + path2);
+	if (isKeyDown("alt")) {
+		exec("cmd", "/c", "start excel.exe \"" + path2 + "\"");
+		exec("cmd", "/c", "start excel.exe \"" + path1 + "\"");
+	}
+	setKeyDown("none");
+}
+
+macro "Open Next [F3]" {
+	run("Open Next");
+}
+
+macro "RGB <-> Stack [F5]" {
+	rgbStackConversion();
+}
+
+macro "Densitometry [F7]" {
+	doDensitometry();
+	
+}
+
+macro "Densitometry, then Open Next [F8]" {
+	doDensitometry();
+	run("Open Next");
+}
+
+macro "Batch Process" {
+	batchProcess(File.directory);
+}
+
+macro "Batch Process Folders" {
+	Dialog.create("Batch options");
+	Dialog.addString("Save results to:",outputName);
+	Dialog.addChoice("If file exists:",clashChoices);
+	Dialog.show();
+	outputName = Dialog.getString();
+	clashChoice = Dialog.getChoice();
+	dir = getDirectory("Select a directory to process");
+	recursiveBatchProcess(dir);
+	outputName = defaultOutputName;
+}
+
+function doDensitometry() {
+	if (nSlices > 1 && bitDepth == 24 && doNotAskAgain == false) { // RGB stack
+		Dialog.create("");
+		Dialog.addCheckbox("Process entire stack",processStack);
+		Dialog.addCheckbox("Do not ask again",doNotAskAgain);
+		Dialog.show();
+		processStack = Dialog.getCheckbox();
+		doNotAskAgain = Dialog.getCheckbox();
+		if (processStack) lastSlice = nSlices;
+			else lastSlice = 1;
+		
+		} else lastSlice = 1;
+	for (i = 1; i <= lastSlice; ++i) {
+		setSlice(i);
+		saveSelection();
+		densitometry();
+	}
+}
+
+
+//-----------------------------------------------------------------------------------------------------------------------------------------------
+function densitometry() {
+	/* tagIndex = 0; now done in saveSelection
+	if (isKeyDown("space")) tagIndex = 1; // command modifier
+	if (isKeyDown("alt")) tagIndex = tagIndex + 2;
+	setKeyDown("none");
+	masterImage = getTitle(); 
+	*/
+	if (bitDepth != 24)
+		rgbStackConversion(); // from 3-image stack
+
+	if (selectionType == -1)
+		exit("Selection required");
+	roiManager("reset");
+	roiManager("add");
+	run("Set Measurements...", "decimal=5 mean integrated");
+
+	if (prompt == -1) {
+		prompt = 0;
+		option("Select options");
+	}
+	run("Duplicate...", "title=tmp");
+
+	if (bitDepth == 24) { // otherwise multi-image stack or 8/16/32 bit image
+		isRGB = true;
+		run("RGB Split");
+		selectWindow("tmp (" + targetCh + ")");
+		run("Duplicate...", "title=Target");
+		selectWindow("tmp (" + maskCh + ")");
+		run("Duplicate...", "title=Mask");
+	} else {
+		isRGB = false;
+		if (bitDepth != 8)
+			run("8-bit");
+		rename("Target");
+		run("Duplicate...", "title=Mask");
+	}
+
+	if (despeckleM)
+		run("Despeckle");
+	if (rollingM > 0)
+		run("Subtract Background...", rollingM);
+	if (smoothM)
+		run("Smooth");
+
+	// threshold only selected area (important if mask channel was inadvertently bleached)
+	run("Restore Selection");
+        getRawStatistics(areaS);  // total area of selection
+	getSelectionCoordinates(xCoord, yCoord); // get background value
+	makeSelection("freeline", xCoord, yCoord);
+	getRawStatistics(area, backG);
+	setBackgroundColor(backG, backG, backG);
+	run("Restore Selection");
+	if (selectionType() == 7) run("Line to Area"); // 2015-08-13 -- to fix spurious error
+	run("Clear Outside");
+	if (thresholdM == "Local") // Local threshold, Bernsen algorithm, Radius = 10
+		run("Auto Local Threshold", "method=Bernsen radius=10 parameter_1=0 parameter_2=0 white");
+	else
+		run("Auto Threshold", "method=" + thresholdM + " ignore_black ignore_white white");
+	// run("Invert LUT"); error fix 2/20/24
+	if (resizeM != "No")
+		run(resizeM); // Dilate or Erode
+	
+	run("Create Selection"); // select outline of particles
+	getRawStatistics(areaP);  // total area of particles
+	close(); // Mask
+	selectWindow("Target");
+	getRawStatistics(area, mean, minG, maxG);
+	run("Restore Selection"); // overlay original image with outline
+	run("Measure");
+	res1 = getResult('Mean', nResults - 1); // particle density
+	setColor(0);
+	fill(); // clear masked selection
+	roiManager("select", 0); // original (cell) outline
+	setSelectionLocation(0,0);
+	run("Measure");
+	makeSelection("freeline", xCoord, yCoord);
+	getRawStatistics(area, perimeterG); // mean intensity under outline 
+	res2 = getResult('Mean', nResults - 1);
+	run("Restore Selection");
+	if (selectionType() == 7) run("Line to Area"); // 2015-08-13 -- to fix spurious error
+	run("Make Inverse");
+	
+	run("Measure"); // extracellular area
+	res3 = getResult('Mean', nResults - 1);
+	
+	if (!isOpen(outputName)) {
+		run("New... ", "name=[" + outputName + "] type=[Table] height=200 width=400 menu");
+		print("["+outputName+"]", "file\t particle\t inside\t outside\t perimeter\t min\t max\t area_selection\t area_particles\n"); 
+		}
+	print("["+outputName+"]", commentTag[tagIndex] + masterImage + "\t " + res1 + "\t " + res2 + "\t " + res3 + "\t " + perimeterG + "\t " + minG + "\t " + maxG + "\t " + areaS + "\t " + areaP);
+
+	if (prompt)
+		option("Press ok to continue");
+	close(); // Target
+	if (isRGB) {
+		if (isOpen("tmp (red)"))selectWindow("tmp (red)");
+		close();
+		if (isOpen("tmp (green)"))selectWindow("tmp (green)");
+		close();
+		if (isOpen("tmp (blue)"))selectWindow("tmp (blue)");
+		close();
+	}
+}
+
+//-----------------------------------------------------------------------------------------------------------------------------------------------
+function option(msg) {
+	Dialog.create("Densitometry " + version);
+	Dialog.addChoice("Target:", colors, targetCh);
+	Dialog.addChoice("Mask:", colors, maskCh);
+	Dialog.addChoice("Threshold method:", thresholdMethods, thresholdM);
+	Dialog.addNumber("Rolling ball (0=skip)", rollingM);
+	Dialog.addChoice("Resize:", resizeMethods, resizeM);
+	Dialog.addCheckbox("Despeckle", despeckleM);
+	Dialog.addCheckbox("Smooth", smoothM);	
+	Dialog.addCheckbox("Pause to show thresholds", prompt);
+	Dialog.addString("Tag 1 <space>:", commentTag[1]);
+	Dialog.addString("Tag 2 <alt>:", commentTag[2]);
+	Dialog.addString("Tag 3 <alt+space>:", commentTag[3]);
+
+	Dialog.show();
+	targetCh = Dialog.getChoice();
+	maskCh = Dialog.getChoice();
+	thresholdM = Dialog.getChoice();
+	rollingM = Dialog.getNumber();
+	resizeM = Dialog.getChoice();
+	despeckleM = Dialog.getCheckbox();
+	smoothM = Dialog.getCheckbox();
+	prompt = Dialog.getCheckbox();
+	commentTag[1] = Dialog.getString();
+	commentTag[2] = Dialog.getString();
+	commentTag[3] = Dialog.getString();
+}
+
+//-----------------------------------------------------------------------------------------------------------------------------------------------
+function saveSelection() {
+	if (selectionType() < 0)
+		exit("Selection required");
+	else {
+		masterImage = getTitle(); //update102607
+		//selectWindow(masterImage); //update102607
+		//roiManager("reset");
+		//
+		//roiManager("add");
+		tagIndex = 0; 
+		if (isKeyDown("space")) tagIndex = 1; // command modifier
+		if (isKeyDown("alt")) tagIndex = tagIndex + 2;
+		setKeyDown("none");
+		if (selectionType() > 4)
+			showMessage("Warning: composite selections cannot be saved");
+		else {
+			getSelectionCoordinates(xCoord, yCoord);
+			if (!isOpen(selectionsName)) {
+				run("New... ", "name=[" + selectionsName + "] type=[Table] height=200 width=400  menu");
+				print("[" + selectionsName + "]", File.directory); // for documentation only,  batchProcess() opens images in current directory
+			}
+			result = masterImage + "\t " + getSliceNumber() + "\t 0\t " + tagIndex + "\t ";
+			for (i = 0; i < xCoord.length; ++i)
+				result = result + xCoord[i] + " ";
+			result = result + "\t ";
+			for (i = 0; i < yCoord.length; ++i)
+				result = result + yCoord[i] + " ";
+			print("[" + selectionsName + "]", result + "\n");
+		} // selectionType <= 4
+	}
+}
+
+//-----------------------------------------------------------------------------------------------------------------------------------------------
+function openNext() { //update102607 no longer used
+	//if (is("Batch Mode")) setBatchMode(false); //# critical
+	if (!isImage())
+		run("Open...");
+	else {
+		fileName = getTitle();
+		extIndex = lastIndexOf(fileName, ".");
+		if (extIndex != -1)
+			fileExt = substring(fileName, extIndex + 1, lengthOf(fileName)); // has extension: tif, jpg, etc.
+		else
+			fileExt = "";
+		fileList = getFileList(File.directory);
+		close(); // scan for last image opened
+		for (i = 0; i < fileList.length; ++i)
+			if (endsWith(fileList[i], fileName))
+				for (j = i + 1; j < fileList.length; ++j)
+					if (endsWith(fileList[j], fileExt)) { // scan for next file with same file extension (could also test for generic extension)
+						open(fileList[j]);
+						masterImage = getTitle();
+						//if (!showImages) setBatchMode(true);
+						return;
+					}
+		exit("End of images");
+	}
+}
+
+//-----------------------------------------------------------------------------------------------------------------------------------------------
+function isImage() { // parses text returned by getInfo("window.contents") to determine if active window is image, is there a better way?
+	info = getInfo("window.contents");
+	infoLines = split(info, "\n");
+	for (i = 0; i < infoLines.length && i < 10; ++i)
+		if (startsWith(infoLines[i], "Coordinate origin:"))
+			return true;
+	return false
+}
+
+//-----------------------------------------------------------------------------------------------------------------------------------------------
+function rgbStackConversion() {
+	if (selectionType() != -1) {  hasSelection = true; roiManager("reset"); roiManager("add"); } else hasSelection = false;
+	if (bitDepth == 24)
+		rgb2Stack(index(colors, targetCh) + 1);
+	else if (nSlices == 3) {
+		// stack2RGB(); update102607
+		close();
+		open(File.directory + File.name);
+		}
+	// else do nothing
+	if (hasSelection) roiManager("select", 0);
+}
+
+//-----------------------------------------------------------------------------------------------------------------------------------------------
+function stack2RGB() {
+	title = getTitle();
+	rename("tmp");
+	run("Convert Stack to Images");
+	run("RGB Merge...", "red=[tmp-0001] green=[tmp-0002] blue=[tmp-0003]");
+	rename(title);
+}
+
+//-----------------------------------------------------------------------------------------------------------------------------------------------
+function rgb2Stack(slice) {
+	title = getTitle();
+	rename("tmp");
+	run("RGB Split");
+	selectWindow("tmp (green)");
+	run("Copy");
+	close();
+	selectWindow("tmp (red)");
+	run("Add Slice");
+	run("Paste");
+	selectWindow("tmp (blue)");
+	run("Copy");
+	close();
+	selectWindow("tmp (red)");
+	run("Add Slice");
+	run("Paste");
+	run("Select None");
+	rename(title);
+	setSlice(slice);
+	run("Fire");
+}
+
+//-----------------------------------------------------------------------------------------------------------------------------------------------
+function index(array, choice) {
+	for (i = 0; i < array.length; ++i)
+		if (array[i] == choice)
+			return i;
+	return  - 1;
+}
+
+//-----------------------------------------------------------------------------------------------------------------------------------------------
+function saveWithRename(dir, fName) {
+	selectWindow(fName);
+	extIndex = lastIndexOf(fName, ".");
+	if (extIndex != -1) { // has extension 
+		fExt = substring(fName, extIndex, lengthOf(fName));
+		fBase = substring(fName, 0, extIndex);
+	} else {
+		fBase = fName;
+		fExt = "";
+	}
+	path = dir + fName;
+	i = 0;
+	while (File.exists(path)) { // if file exists, save as file-1, -2, etc.
+		path = dir + fBase + "-" + (++i) + fExt;
+	}
+	save(path);
+	return path;
+}
+
+//-----------------------------------------------------------------------------------------------------------------------------------------------
+function saveWithOverwrite(dir, fName) {
+	selectWindow(fName);
+	outp = getInfo("window.contents");
+	print("\\Clear");
+	print(outp);
+	selectWindow("Log");
+	path = dir + fName;
+	save(path);
+	return path;
+}
+
+
+//-----------------------------------------------------------------------------------------------------------------------------------------------
+function recursiveBatchProcess(dir) {
+	list = getFileList(dir);
+	for (i=0; i<list.length; i++) {                           
+		if (endsWith(list[i], "/")) {
+			recursiveBatchProcess(""+dir+list[i]);
+		}
+		else if (endsWith(list[i],selectionsName)) {
+			if (File.exists(dir+outputName) && startsWith(clashChoice,"Skip"))
+				print("Skipping folder because "+dir+outputName+" already exists");
+			else {
+				if (isOpen(selectionsName)) { selectWindow(selectionsName); run("Close"); }
+				if (isOpen(outputName)) { selectWindow(outputName); run("Close"); }
+				path = dir+list[i];
+				run("Text File... ", "open=["+path+"]");
+				// open(path); // in 1.43q; *.txt files are opened as macros by default, which breaks the split() command
+				batchProcess(dir);
+				if (startsWith(clashChoice,"Overwrite"))
+					print("Saving "+saveWithOverwrite(dir, outputName));	
+				else print("Saving "+saveWithRename(dir, outputName));
+			}
+		}
+	}
+}
+
+//-----------------------------------------------------------------------------------------------------------------------------------------------
+function batchProcess(path) {
+	selectWindow(selectionsName);
+	selections = split(getInfo("window.contents"), "\n");
+	// selections[0] contains original path; ignored
+	for (i = 1; i < selections.length; ++i) {
+		// if (is("Batch Mode")) setBatchMode(false); //# critical
+		selection = split(selections[i], "\t"); // image name, slice#, accumulateResults, printComment, xCoords, yCoords
+		if (!isOpen(selection[0])) {
+			if (isOpen(masterImage)) { // close previous image
+				selectWindow(masterImage);
+				close();
+			}
+			open(path + selection[0]);
+			masterImage = getTitle();
+		}
+		if (parseInt(selection[1]) <= nSlices)
+		setSlice(selection[1]); // stored slice # may be from 3-slice stack equivalent of RGB image
+		//accumulateResults = selection[2];
+		tagIndex = selection[3];
+		xCoord = split(selection[4], " ");
+		yCoord = split(selection[5], " ");
+		makeSelection("freehand", xCoord, yCoord);
+		if (selectionType() == 7) run("Line to Area"); // 2015-08-13 -- to fix spurious error
+		doDensitometry();
+	}
+	selectWindow(masterImage);
+	close();
+}

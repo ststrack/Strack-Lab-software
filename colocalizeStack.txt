@@ -1,0 +1,261 @@
+/* Wrapper for JACoP - works with RGB images and stacks of arbitrary channel number; threshold method (for Manders') may be specified
+v1.0 05122019 Stefan Strack
+v1.1 05222019 also implements normalized mean deviation product (nMDP)
+ */
+var thresholdMethods = getList("threshold.methods"), thresholdMethod = "Default", noiseCutOff = 4, runJACoP = true, runNMDP = true;
+var _i = init(), outputName = "Output.txt", ch = newArray("R", "G", "B", "W", "4", "5", "6", "7", "8", "9");
+
+macro "Options [F1]" {
+	init();
+}
+
+macro "Options Action Tool - C000D00D01D02D03D04D05D06D07D08D09D0aD0bD0cD0dD0eD0fD10D11D12D13D14D17D18D1bD1cD1dD1eD1fD20D21D22D23D24D27D28D2bD2cD2dD2eD2fD30D31D32D33D34D37D38D3bD3cD3dD3eD3fD40D41D42D43D44D47D48D4bD4cD4dD4eD4fD50D51D52D53D54D57D58D5bD5cD5dD5eD5fD60D61D62D63D64D65D66D67D68D69D6aD6bD6cD6dD6eD6fD70D71D72D75D76D77D78D79D7aD7bD7cD7dD7eD7fD80D81D85D86D87D88D89D8aD8bD8cD8dD8eD8fD90D94D95D96D97D98D99D9aD9bD9cD9dD9fDa0Da3Da4Da5Da6Da7DacDb0Db3Db4Db5Db6DbcDc0Dc4Dc5Dc9DcaDcbDccDcdDcfDd0Dd1Dd8Dd9DdaDdbDdcDddDdeDdfDe0De1De2De7De8De9DeaDebDecDedDeeDefDf0Df1Df2Df3Df4Df5Df6Df7Df8Df9DfaDfbDfcDfdDfeDffC000C111C222C333C444C555C666C777C888C999CaaaCbbbCcccCdddCeeeCfffD15D16D19D1aD25D26D29D2aD35D36D39D3aD45D46D49D4aD55D56D59D5aD73D74D82D83D84D91D92D93D9eDa1Da2Da8Da9DaaDabDadDaeDafDb1Db2Db7Db8Db9DbaDbbDbdDbeDbfDc1Dc2Dc3Dc6Dc7Dc8DceDd2Dd3Dd4Dd5Dd6Dd7De3De4De5De6" {
+	init();
+}
+
+macro "Colocalize Stack [F7]" {
+	colocalizeStack();
+}
+
+macro "Colocalize Stack Action Tool - C000D00D01D02D03D04D05D06D07D08D09D0aD0bD0cD0dD0eD0fD10D11D1eD1fD20D21D2eD2fD30D31D34D35D36D39D3aD3bD3cD3dD3eD3fD40D41D44D45D46D49D4aD4bD4cD4dD4eD4fD50D51D54D55D56D59D5aD5bD5cD5dD5eD5fD60D61D64D65D66D67D68D69D6aD6bD6cD6dD6eD6fD70D71D72D73D74D75D76D77D78D79D7aD7bD7cD7dD7eD7fD80D81D84D85D86D87D88D89D8aD8bD8cD8dD8eD8fD90D91D94D95D96D97D98D99D9aD9bD9eD9fDa0Da1Da4Da5Da6Da7Da8Da9DaeDafDb0Db1Db4Db5Db6Db7DbcDbdDbeDbfDc0Dc1Dc4Dc5DcaDcbDccDcdDceDcfDd0Dd1Dd8Dd9DdaDdbDdcDddDdeDdfDe0De1De6De7De8De9DeaDebDecDedDeeDefDf0Df1Df2Df3Df4Df5Df6Df7Df8Df9DfaDfbDfcDfdDfeDffC3b0C280Cff0C7f0D12D13D14D15D16D17D18D19D1aD1bD1cD1dD22D23D24D25D26D27D28D29D2aD2bD2cD2dD32D33D37D38D42D43D47D48D52D53D57D58D62D63D82D83D92D93D9cD9dDa2Da3DaaDabDacDadDb2Db3Db8Db9DbaDbbDc2Dc3Dc6Dc7Dc8Dc9Dd2Dd3Dd4Dd5Dd6Dd7De2De3De4De5" {
+	colocalizeStack();
+}
+
+macro "Batch Colocalization" {
+	// process "Selection.txt" if open, otherwise current text window or roiManager
+	if (isOpen("Selections.txt"))
+		selectWindow("Selections.txt");
+	setBatchMode(true);
+	if (getInfo("window.type") == "Text") {
+		selections = split(getInfo("window.contents"), "\n\n");
+		// selections[0] contains original path; ignored
+
+		for (i = 1; i < selections.length; ++i) {
+			selection = split(selections[i], "\t"); // image name, slice#, accumulateResults, printComment, xCoords, yCoords
+			//open(File.directory + selection[0]); 20190920
+			if (!isOpen(selection[0])) {
+					if (i > 1)
+						close(); // previous image
+					open(File.directory + selection[0]);
+				}
+			xCoord = split(selection[4], " ");
+			yCoord = split(selection[5], " ");
+			makeSelection("freehand", xCoord, yCoord);
+			colocalizeStack();
+			// close(); 20190920
+		}
+	} else { // Selections stored in roiManager with file names = selection names (digitizer macro format)
+		c = roiManager("count");
+		if (c > 0) {
+			for (i = 0; i < c; ++i) {
+				s0Name = call("ij.plugin.frame.RoiManager.getName", i); // selection name
+				sName = stringTrim(s0Name, "0123456789-() _\t\n\r"); // reduce "file.tif-3" to "file.tif"
+				// open(File.directory + sName); 20190920
+				if (!isOpen(sName)) {
+					if (i > 0) 
+						close();
+					open(File.directory + sName);
+				}
+				roiManager("Select", i);
+				colocalizeStack();
+				//close(); 20190920
+			}
+		} else
+			exit("Not a text window and nothing in ROI Manager!\nNeed selections to batch-process.");
+	}
+	setBatchMode(false);
+}
+
+function init() {
+	do {
+		Dialog.create("Colocalization Options");
+		Dialog.addCheckbox("Output Pearson, Manders (JACoP)", runJACoP);
+		Dialog.addCheckbox("Output Normalized Mean Deviation Product (nMDP)", runNMDP);
+		if (!runJACoP && !runNMDP)
+			Dialog.addMessage("Select at least one of the above\n\n");
+		Dialog.addChoice("Threshold method (Manders, nMDP):", thresholdMethods, thresholdMethod);
+		Dialog.addSlider("nMDP cutoff(0 = mean):", -9, 9, noiseCutOff);
+		Dialog.show();
+		runJACoP = Dialog.getCheckbox();
+		runNMDP = Dialog.getCheckbox();
+		thresholdMethod = Dialog.getChoice();
+		noiseCutOff = Dialog.getNumber();
+	} while (!runJACoP && !runNMDP);
+	return true;
+}
+
+function colocalizeStack() {
+	wname = getTitle();
+	setBackgroundColor(0,0,0);
+	if (selectionType < 0)
+		run("Select All");
+	run("Duplicate...", "title=_tmp duplicate");
+	if (bitDepth == 24) {
+		rename("channel");
+		run("Split Channels");
+		run("Images to Stack", "name=_tmp title=channel use");
+		}
+	nS = nSlices;
+	if (nS > 1) {
+		outputS = wname + " \t";
+		if (selectionType > 0)  // clear outside of selection
+			run("Clear Outside", "stack");
+		// mask with itself for Pearson with threshold and nMDP
+		run("Duplicate...", "title=masked_tmp duplicate");
+		for (i = 1; i <= nS; ++i) {
+			setSlice(i);
+			run("Duplicate...", "use");
+			setAutoThreshold(thresholdMethod + " dark");
+			run("Create Selection");
+			if (selectionType >= 0)
+				run("Clear Outside");
+			run("Select All");
+			run("Copy");
+			close();
+			run("Paste");
+		}
+
+		for (i = 1; i <= nS; ++i) {
+			if (runJACoP) {
+				selectWindow("_tmp");
+				setSlice(i);
+				run("Duplicate...", "title=img1");
+				setAutoThreshold(thresholdMethod + " dark");
+				getThreshold(thrs1, upper);
+				selectWindow("masked_tmp");
+				setSlice(i);
+				run("Duplicate...", "title=img1_t");
+			}
+			for (j = i + 1; j <= nS; ++j) {
+				if (runJACoP) {
+					selectWindow("_tmp");
+					setSlice(j);
+					run("Duplicate...", "title=img2");
+					setAutoThreshold(thresholdMethod + " dark");
+					getThreshold(thrs2, upper);
+					selectWindow("masked_tmp");
+					setSlice(j);
+					run("Duplicate...", "title=img2_t");
+					// Pearson coefficient from autothresholded image
+					print("\\Clear"); // clear Log window
+					run("JACoP ", "imga=img1_t imgb=img2_t thra=" + thrs1 + " thrb=" + thrs2 + " pearson mm");
+					selectWindow("Log");
+					lines_t = split(getInfo("window.contents"), "\n\r");
+					// Pearson (w/o threshold) and Manders from original image
+					print("\\Clear"); // clear Log window
+					run("JACoP ", "imga=img1 imgb=img2 thra=" + thrs1 + " thrb=" + thrs2 + " pearson mm");
+					selectWindow("Log");
+					lines = split(getInfo("window.contents"), "\n\r");
+					outputS = outputS + substring(lines[4], 2, lengthOf(lines[4])) // Pearson w/o threshold
+						 + "\t " + substring(lines_t[4], 2, lengthOf(lines_t[4])) // Pearson with threshold
+						 + "\t " + substring(lines[9], 3, indexOf(lines[9], " ")) // M1 (with thresholds)
+						 + "\t " + substring(lines[10], 3, indexOf(lines[10], " ")) + " \t"; // M2 (with thresholds)
+					selectWindow("img2");
+					close();
+					selectWindow("img2_t");
+					close();
+				}
+				if (runNMDP)
+					outputS = outputS + normalizedMeanDeviationProduct("masked_tmp", i, j);
+			}
+			if (runJACoP) {
+				selectWindow("img1");
+				close();
+				selectWindow("img1_t");
+				close();
+			}
+		}
+		if (!isOpen(outputName)) {
+			run("New... ", "name=[" + outputName + "] type=[Table] height=200 width=400 menu");
+			header = "file \t";
+			for (i = 0, n = 0; i < nSlices; ++i)
+				for (j = i + 1; j < nSlices; ++j, ++n) {
+					if (runJACoP)
+						header = header + ch[i] + ch[j] + "p \t" + ch[i] + ch[j] + "pt \t" + ch[i] + ch[j] + "m1 \t" + ch[i] + ch[j] + "m2 \t";
+					if (runNMDP)
+						header = header + ch[i] + ch[j] + "iC \t" + ch[i] + ch[j] + "nM \t" + ch[i] + ch[j] + "nM+ \t";
+				}
+			average = "=COUNT(B7:B999) \t";
+			stdev = thresholdMethod + " thresh. method \t";
+			for (i = 1; i <= n * (4 * runJACoP + 3 * runNMDP); ++i) {
+				column = excelColumnCode(i); // "B", "C", .. "AA", "AB", ..
+				average = average + "=AVERAGE(" + column + "7:" + column + "999) \t";
+				stdev = stdev + "=STDEV(" + column + "7:" + column + "999) \t";
+			}
+			print("[" + outputName + "]", average + "\n" + stdev + "\n\n\n\n" + header);
+		}
+		print("[" + outputName + "]", outputS);
+	} else
+		waitForUser("Nothing to colocalize - RGB or image stack required");
+	close(); //_tmp
+	close(); // masked_tmp
+}
+
+function stringTrim(in, trimChars) {
+	for (i = lengthOf(in); i >= 0 && (indexOf(trimChars, substring(in, i - 1, i)) >= 0); --i); // decrement until char not in trimChars is found
+	return substring(in, 0, i);
+}
+
+function excelColumnCode(i) { // return "A", "B", .., "Z", "AA", "AB", ..
+	c1 = floor(i / 26);
+	if (c1 == 0)
+		out = "";
+	else
+		out = fromCharCode(64 + c1);
+	return out + fromCharCode(65 + (i % 26));
+}
+
+function normalizedMeanDeviationProduct(imageN, s1, s2) { // function arguments are slice numbers in image stack
+	setBackgroundColor(0, 0, 0); // black
+	colocNPixels = newArray(0, 0);
+	colocMean = newArray(0, 0);
+	colocMin = newArray(0, 0);
+	colocMax = newArray(0, 0);
+	selectWindow(imageN);
+	setSlice(s1);
+	getRawStatistics(colocNPixels[0], colocMean[0], colocMin[0], colocMax[0]);
+	run("Duplicate...", "title=_red");
+	selectWindow(imageN);
+	setSlice(s2);
+	getRawStatistics(colocNPixels[1], colocMean[1], colocMin[1], colocMax[1]);
+	run("Duplicate...", "title=_green");
+	run("Merge Channels...", "c1=_red c2=_green"); // title = "RGB"
+
+	// compute normalized mean deviation product (nMDP) Jaskolski et al., J Neurosci Meth 146:42-49 (2005)
+	w = getWidth;
+	h = getHeight;
+	divisor = (colocMax[0] - colocMean[0]) * (colocMax[1] - colocMean[1]);
+	bg1 = colocMean[0] + noiseCutOff * (colocMax[0] - colocMean[0]) / 10; // noise cutoff [0-9]
+	bg2 = colocMean[1] + noiseCutOff * (colocMax[1] - colocMean[1]) / 10;
+	posN = 0;
+	totalN = 0;
+	posAccu = 0;
+	totalAccu = 0;
+	for (i = 0; i < w; ++i)
+		for (j = 0; j < h; ++j) {
+			p = getPixel(i, j);
+			c1 = (p >> 16) & 0xFF;
+			c2 = (p >> 8) & 0xFF;
+			// print(c1+" "+c2); debug
+			if (c1 > bg1 || c2 > bg2) { // at least one channel above noise
+				nMDP = ((c1 - colocMean[0]) * (c2 - colocMean[1])) / divisor;
+				totalN += 1;
+				totalAccu += nMDP;
+				if (nMDP > 0) {
+					posN += 1;
+					posAccu += nMDP;
+				}
+				// store scaled nMDP in blue channel
+				/* if (!batchM) {
+				c3 = 127 + (128 * nMDP);
+				if (c3 < 0)
+				c3 = 0;
+				putPixel(i, j, p + c3);
+				} */
+			}
+		}
+	close(); // "RGB"
+
+	return "" + posN / totalN + " \t" + totalAccu / totalN + " \t" + posAccu / posN + " \t";
+
+}
